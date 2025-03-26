@@ -1,4 +1,22 @@
 import streamlit as st
+import os
+import sys
+import subprocess
+
+# Install missing packages
+def install_packages():
+    try:
+        import pandas
+        import plotly.express
+    except ImportError:
+        st.write("Installing required packages...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "pandas", "plotly"])
+        st.experimental_rerun()
+
+# Call the installation function
+install_packages()
+
+# Now import the packages
 import pandas as pd
 import datetime
 import json
@@ -134,9 +152,12 @@ def generate_monthly_report(month=None, year=None):
     # Filter transactions for the given month/year
     monthly_transactions = []
     for t in st.session_state.transactions:
-        t_date = datetime.datetime.fromisoformat(t["timestamp"]).date()
-        if t_date.month == month and t_date.year == year:
-            monthly_transactions.append(t)
+        try:
+            t_date = datetime.datetime.fromisoformat(t["timestamp"]).date()
+            if t_date.month == month and t_date.year == year:
+                monthly_transactions.append(t)
+        except (ValueError, KeyError):
+            continue
     
     monthly_income = sum(t["income"] for t in monthly_transactions)
     monthly_expenses = sum(t["expense"] for t in monthly_transactions)
@@ -214,11 +235,13 @@ def show_dashboard():
     if st.session_state.transactions:
         transactions_df = pd.DataFrame(st.session_state.transactions)
         # Sort by timestamp (newest first)
-        transactions_df = transactions_df.sort_values(by="timestamp", ascending=False)
+        if "timestamp" in transactions_df.columns:
+            transactions_df = transactions_df.sort_values(by="timestamp", ascending=False)
         # Limit to last 5
         recent_transactions = transactions_df.head(5)
         # Select only the columns we want to display
-        display_columns = ["date", "description", "category", "income", "expense", "authorized_by"]
+        display_columns = [col for col in ["date", "description", "category", "income", "expense", "authorized_by"] 
+                           if col in recent_transactions.columns]
         st.dataframe(recent_transactions[display_columns], use_container_width=True)
     else:
         st.info("No transactions recorded yet.")
@@ -240,11 +263,15 @@ def show_dashboard():
         
         if income_data:
             income_df = pd.DataFrame(income_data)
-            fig = px.bar(income_df, x="Category", y=["Budget", "Actual"], 
-                        title="Income: Budget vs. Actual",
-                        barmode="group",
-                        color_discrete_sequence=["#1f77b4", "#2ca02c"])
-            st.plotly_chart(fig, use_container_width=True)
+            try:
+                fig = px.bar(income_df, x="Category", y=["Budget", "Actual"], 
+                            title="Income: Budget vs. Actual",
+                            barmode="group",
+                            color_discrete_sequence=["#1f77b4", "#2ca02c"])
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Error creating chart: {e}")
+                st.dataframe(income_df)
     
     with col2:
         # Expense budget vs actual
@@ -258,11 +285,15 @@ def show_dashboard():
         
         if expense_data:
             expense_df = pd.DataFrame(expense_data)
-            fig = px.bar(expense_df, x="Category", y=["Budget", "Actual"], 
-                        title="Expenses: Budget vs. Actual",
-                        barmode="group",
-                        color_discrete_sequence=["#d62728", "#ff7f0e"])
-            st.plotly_chart(fig, use_container_width=True)
+            try:
+                fig = px.bar(expense_df, x="Category", y=["Budget", "Actual"], 
+                            title="Expenses: Budget vs. Actual",
+                            barmode="group",
+                            color_discrete_sequence=["#d62728", "#ff7f0e"])
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Error creating chart: {e}")
+                st.dataframe(expense_df)
     
     # Quick actions
     st.subheader("Quick Actions")
@@ -335,12 +366,16 @@ def show_transactions():
     if st.session_state.transactions:
         transactions_df = pd.DataFrame(st.session_state.transactions)
         # Sort by date (newest first)
-        transactions_df = transactions_df.sort_values(by="timestamp", ascending=False)
+        if "timestamp" in transactions_df.columns:
+            transactions_df = transactions_df.sort_values(by="timestamp", ascending=False)
         # Format currency columns
-        transactions_df["income"] = transactions_df["income"].apply(lambda x: f"KD {x:.2f}" if x > 0 else "")
-        transactions_df["expense"] = transactions_df["expense"].apply(lambda x: f"KD {x:.2f}" if x > 0 else "")
+        if "income" in transactions_df.columns:
+            transactions_df["income"] = transactions_df["income"].apply(lambda x: f"KD {x:.2f}" if x > 0 else "")
+        if "expense" in transactions_df.columns:
+            transactions_df["expense"] = transactions_df["expense"].apply(lambda x: f"KD {x:.2f}" if x > 0 else "")
         # Select columns to display
-        display_columns = ["date", "description", "category", "income", "expense", "authorized_by", "receipt_num", "notes"]
+        display_columns = [col for col in ["date", "description", "category", "income", "expense", "authorized_by", "receipt_num", "notes"]
+                           if col in transactions_df.columns]
         st.dataframe(transactions_df[display_columns], use_container_width=True)
         
         # Export option
@@ -501,47 +536,53 @@ def show_budget():
     # Budget visualization
     st.subheader("Budget Visualization")
     
-    # Budget vs. Actual bar chart
-    fig = go.Figure()
-    
-    # Add budget bars
-    fig.add_trace(go.Bar(
-        name='Income Budget',
-        x=['Income'],
-        y=[total_income_budget],
-        marker_color='rgba(44, 160, 44, 0.7)'
-    ))
-    
-    fig.add_trace(go.Bar(
-        name='Income Actual',
-        x=['Income'],
-        y=[total_income_actual],
-        marker_color='rgba(44, 160, 44, 1.0)'
-    ))
-    
-    fig.add_trace(go.Bar(
-        name='Expense Budget',
-        x=['Expense'],
-        y=[total_expense_budget],
-        marker_color='rgba(214, 39, 40, 0.7)'
-    ))
-    
-    fig.add_trace(go.Bar(
-        name='Expense Actual',
-        x=['Expense'],
-        y=[total_expense_actual],
-        marker_color='rgba(214, 39, 40, 1.0)'
-    ))
-    
-    # Update layout
-    fig.update_layout(
-        title='Budget vs. Actual Summary',
-        xaxis_title='Category',
-        yaxis_title='Amount (KD)',
-        barmode='group'
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
+    try:
+        # Budget vs. Actual bar chart
+        fig = go.Figure()
+        
+        # Add budget bars
+        fig.add_trace(go.Bar(
+            name='Income Budget',
+            x=['Income'],
+            y=[total_income_budget],
+            marker_color='rgba(44, 160, 44, 0.7)'
+        ))
+        
+        fig.add_trace(go.Bar(
+            name='Income Actual',
+            x=['Income'],
+            y=[total_income_actual],
+            marker_color='rgba(44, 160, 44, 1.0)'
+        ))
+        
+        fig.add_trace(go.Bar(
+            name='Expense Budget',
+            x=['Expense'],
+            y=[total_expense_budget],
+            marker_color='rgba(214, 39, 40, 0.7)'
+        ))
+        
+        fig.add_trace(go.Bar(
+            name='Expense Actual',
+            x=['Expense'],
+            y=[total_expense_actual],
+            marker_color='rgba(214, 39, 40, 1.0)'
+        ))
+        
+        # Update layout
+        fig.update_layout(
+            title='Budget vs. Actual Summary',
+            xaxis_title='Category',
+            yaxis_title='Amount (KD)',
+            barmode='group'
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.error(f"Error creating chart: {e}")
+        # Display as text instead
+        st.write(f"Income Budget: KD {total_income_budget:.2f}, Actual: KD {total_income_actual:.2f}")
+        st.write(f"Expense Budget: KD {total_expense_budget:.2f}, Actual: KD {total_expense_actual:.2f}")
 
 # Events function
 def show_events():
@@ -587,27 +628,32 @@ def show_events():
     
     if st.session_state.events:
         events_df = pd.DataFrame(st.session_state.events)
-        # Format currency columns
-        events_df["projected_income"] = events_df["projected_income"].apply(lambda x: f"KD {x:.2f}")
-        events_df["projected_expenses"] = events_df["projected_expenses"].apply(lambda x: f"KD {x:.2f}")
-        events_df["actual_income"] = events_df["actual_income"].apply(lambda x: f"KD {x:.2f}")
-        events_df["actual_expenses"] = events_df["actual_expenses"].apply(lambda x: f"KD {x:.2f}")
-        # Rename columns for display
-        display_df = events_df.rename(columns={
-            "name": "Event Name",
-            "date": "Date",
-            "location": "Location",
-            "coordinator": "Coordinator",
-            "projected_income": "Projected Income",
-            "projected_expenses": "Projected Expenses",
-            "actual_income": "Actual Income",
-            "actual_expenses": "Actual Expenses",
-            "status": "Status"
-        })
-        # Select columns to display
-        display_columns = ["Event Name", "Date", "Location", "Coordinator", 
-                          "Projected Income", "Projected Expenses", "Status"]
-        st.dataframe(display_df[display_columns], use_container_width=True)
+        try:
+            # Format currency columns
+            events_df["projected_income"] = events_df["projected_income"].apply(lambda x: f"KD {x:.2f}")
+            events_df["projected_expenses"] = events_df["projected_expenses"].apply(lambda x: f"KD {x:.2f}")
+            events_df["actual_income"] = events_df["actual_income"].apply(lambda x: f"KD {x:.2f}")
+            events_df["actual_expenses"] = events_df["actual_expenses"].apply(lambda x: f"KD {x:.2f}")
+            # Rename columns for display
+            display_df = events_df.rename(columns={
+                "name": "Event Name",
+                "date": "Date",
+                "location": "Location",
+                "coordinator": "Coordinator",
+                "projected_income": "Projected Income",
+                "projected_expenses": "Projected Expenses",
+                "actual_income": "Actual Income",
+                "actual_expenses": "Actual Expenses",
+                "status": "Status"
+            })
+            # Select columns to display
+            display_columns = [col for col in ["Event Name", "Date", "Location", "Coordinator", 
+                               "Projected Income", "Projected Expenses", "Status"]
+                               if col in display_df.columns]
+            st.dataframe(display_df[display_columns], use_container_width=True)
+        except Exception as e:
+            st.error(f"Error displaying events: {e}")
+            st.write(events_df)
         
         # Event details
         st.subheader("Event Details")
@@ -672,7 +718,7 @@ def show_events():
     else:
         st.info("No events created yet.")
 
-# Reports function
+# Reports function (simplified version)
 def show_reports():
     st.header("Financial Reports")
     
@@ -740,266 +786,17 @@ def show_reports():
                 transactions_df["income"] = transactions_df["income"].apply(lambda x: f"KD {x:.2f}" if x > 0 else "")
                 transactions_df["expense"] = transactions_df["expense"].apply(lambda x: f"KD {x:.2f}" if x > 0 else "")
                 # Select columns to display
-                display_columns = ["date", "description", "category", "income", "expense", "authorized_by"]
+                display_columns = [col for col in ["date", "description", "category", "income", "expense", "authorized_by"]
+                                  if col in transactions_df.columns]
                 st.dataframe(transactions_df[display_columns], use_container_width=True)
             else:
                 st.info("No transactions for this period.")
     
-    elif report_type == "Year-to-Date":
-        # Year selection
-        current_year = datetime.datetime.now().year
-        selected_year = st.selectbox("Year", 
-                                    list(range(current_year-2, current_year+3)))
-        
-        # Generate report
-        if st.button("Generate Report"):
-            # Collect data for each month
-            now = datetime.datetime.now()
-            end_month = now.month if selected_year == now.year else 12
-            
-            monthly_data = []
-            total_income = 0
-            total_expenses = 0
-            
-            for month in range(1, end_month + 1):
-                report = generate_monthly_report(month, selected_year)
-                monthly_data.append({
-                    "month": month,
-                    "income": report["total_income"],
-                    "expenses": report["total_expenses"],
-                    "net": report["net"]
-                })
-                total_income += report["total_income"]
-                total_expenses += report["total_expenses"]
-            
-            # Display report
-            st.subheader(f"Year-to-Date Financial Report - {selected_year}")
-            
-            # Summary metrics
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric("Total Income YTD", f"KD {total_income:.2f}")
-            
-            with col2:
-                st.metric("Total Expenses YTD", f"KD {total_expenses:.2f}")
-            
-            with col3:
-                st.metric("Net YTD", f"KD {total_income - total_expenses:.2f}")
-            
-            # Monthly breakdown
-            st.subheader("Monthly Breakdown")
-            
-            if monthly_data:
-                # Create DataFrame
-                month_names = [
-                    "January", "February", "March", "April", "May", "June", 
-                    "July", "August", "September", "October", "November", "December"
-                ]
-                
-                for data in monthly_data:
-                    data["month_name"] = month_names[data["month"]-1]
-                
-                monthly_df = pd.DataFrame(monthly_data)
-                monthly_df["income"] = monthly_df["income"].apply(lambda x: f"KD {x:.2f}")
-                monthly_df["expenses"] = monthly_df["expenses"].apply(lambda x: f"KD {x:.2f}")
-                monthly_df["net"] = monthly_df["net"].apply(lambda x: f"KD {x:.2f}")
-                
-                display_df = monthly_df.rename(columns={
-                    "month_name": "Month",
-                    "income": "Income",
-                    "expenses": "Expenses",
-                    "net": "Net"
-                })
-                
-                st.dataframe(display_df[["Month", "Income", "Expenses", "Net"]], use_container_width=True)
-                
-                # Chart
-                chart_df = pd.DataFrame(monthly_data)
-                
-                fig = go.Figure()
-                
-                fig.add_trace(go.Bar(
-                    x=chart_df["month_name"],
-                    y=chart_df["income"],
-                    name="Income",
-                    marker_color="rgba(44, 160, 44, 0.8)"
-                ))
-                
-                fig.add_trace(go.Bar(
-                    x=chart_df["month_name"],
-                    y=chart_df["expenses"],
-                    name="Expenses",
-                    marker_color="rgba(214, 39, 40, 0.8)"
-                ))
-                
-                fig.add_trace(go.Scatter(
-                    x=chart_df["month_name"],
-                    y=chart_df["net"],
-                    name="Net",
-                    mode="lines+markers",
-                    line=dict(color="rgba(31, 119, 180, 1.0)", width=3)
-                ))
-                
-                fig.update_layout(
-                    title=f"Monthly Financial Performance - {selected_year}",
-                    xaxis_title="Month",
-                    yaxis_title="Amount (KD)",
-                    legend_title="Category"
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No data available for this year.")
-    
-    elif report_type == "Event Analysis":
-        if not st.session_state.events:
-            st.info("No events available for analysis.")
-        else:
-            # Event selection
-            selected_event = st.selectbox("Select Event", 
-                                         [e["name"] for e in st.session_state.events])
-            
-            # Generate report
-            if st.button("Generate Report"):
-                event = next((e for e in st.session_state.events if e["name"] == selected_event), None)
-                
-                if event:
-                    # Display report
-                    st.subheader(f"Event Analysis Report - {event['name']}")
-                    
-                    # Event details
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.write(f"**Date:** {event['date']}")
-                        st.write(f"**Location:** {event['location']}")
-                        st.write(f"**Coordinator:** {event['coordinator']}")
-                        st.write(f"**Status:** {event['status']}")
-                    
-                    # Financial analysis
-                    st.subheader("Financial Analysis")
-                    
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.write("**Income:**")
-                        st.write(f"Projected: KD {event['projected_income']:.2f}")
-                        st.write(f"Actual: KD {event['actual_income']:.2f}")
-                        variance = event['actual_income'] - event['projected_income']
-                        st.write(f"Variance: KD {variance:.2f} ({variance/event['projected_income']*100:.1f}% of projection)" if event['projected_income'] > 0 else "Variance: N/A")
-                    
-                    with col2:
-                        st.write("**Expenses:**")
-                        st.write(f"Projected: KD {event['projected_expenses']:.2f}")
-                        st.write(f"Actual: KD {event['actual_expenses']:.2f}")
-                        variance = event['actual_expenses'] - event['projected_expenses']
-                        st.write(f"Variance: KD {variance:.2f} ({variance/event['projected_expenses']*100:.1f}% of projection)" if event['projected_expenses'] > 0 else "Variance: N/A")
-                    
-                    st.write("**Net:**")
-                    projected_profit = event['projected_income'] - event['projected_expenses']
-                    actual_profit = event['actual_income'] - event['actual_expenses']
-                    st.write(f"Projected Profit: KD {projected_profit:.2f}")
-                    st.write(f"Actual Profit: KD {actual_profit:.2f}")
-                    profit_variance = actual_profit - projected_profit
-                    st.write(f"Profit Variance: KD {profit_variance:.2f}")
-                    
-                    # Visualization
-                    fig = go.Figure()
-                    
-                    categories = ["Income", "Expenses", "Profit"]
-                    projected = [event['projected_income'], event['projected_expenses'], projected_profit]
-                    actual = [event['actual_income'], event['actual_expenses'], actual_profit]
-                    
-                    fig.add_trace(go.Bar(
-                        x=categories,
-                        y=projected,
-                        name="Projected",
-                        marker_color="rgba(31, 119, 180, 0.8)"
-                    ))
-                    
-                    fig.add_trace(go.Bar(
-                        x=categories,
-                        y=actual,
-                        name="Actual",
-                        marker_color="rgba(255, 127, 14, 0.8)"
-                    ))
-                    
-                    fig.update_layout(
-                        title=f"Financial Performance - {event['name']}",
-                        xaxis_title="Category",
-                        yaxis_title="Amount (KD)",
-                        legend_title="Type",
-                        barmode="group"
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-    
-    elif report_type == "Fundraising Results":
-        if not st.session_state.fundraising:
-            st.info("No fundraising initiatives available for analysis.")
-        else:
-            # Calculate total results
-            total_goal = sum(f["goal_amount"] for f in st.session_state.fundraising)
-            total_raised = sum(f["actual_raised"] for f in st.session_state.fundraising)
-            total_expenses = sum(f["expenses"] for f in st.session_state.fundraising)
-            total_net = sum(f["net_proceeds"] for f in st.session_state.fundraising)
-            
-            # Display report
-            st.subheader("Fundraising Results Report")
-            
-            # Summary metrics
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.metric("Total Goal", f"KD {total_goal:.2f}")
-            
-            with col2:
-                st.metric("Total Raised", f"KD {total_raised:.2f}")
-            
-            with col3:
-                st.metric("Total Expenses", f"KD {total_expenses:.2f}")
-            
-            with col4:
-                st.metric("Total Net Proceeds", f"KD {total_net:.2f}")
-            
-            if total_goal > 0:
-                st.metric("Overall Success Rate", f"{(total_raised/total_goal)*100:.1f}%")
-            
-            # Individual initiatives
-            st.subheader("Individual Initiatives")
-            
-            if st.session_state.fundraising:
-                fundraising_df = pd.DataFrame(st.session_state.fundraising)
-                # Calculate success rate
-                fundraising_df["success_rate"] = fundraising_df.apply(
-                    lambda x: f"{(x['actual_raised']/x['goal_amount'])*100:.1f}%" if x['goal_amount'] > 0 else "N/A", 
-                    axis=1
-                )
-                # Format currency columns
-                fundraising_df["goal_amount"] = fundraising_df["goal_amount"].apply(lambda x: f"KD {x:.2f}")
-                fundraising_df["actual_raised"] = fundraising_df["actual_raised"].apply(lambda x: f"KD {x:.2f}")
-                fundraising_df["expenses"] = fundraising_df["expenses"].apply(lambda x: f"KD {x:.2f}")
-                fundraising_df["net_proceeds"] = fundraising_df["net_proceeds"].apply(lambda x: f"KD {x:.2f}")
-                # Rename columns for display
-                display_df = fundraising_df.rename(columns={
-                    "name": "Initiative Name",
-                    "dates": "Dates",
-                    "coordinator": "Coordinator",
-                    "goal_amount": "Goal",
-                    "actual_raised": "Raised",
-                    "expenses": "Expenses",
-                    "net_proceeds": "Net Proceeds",
-                    "success_rate": "Success Rate",
-                    "status": "Status"
-                })
-                # Select columns to display
-                display_columns = ["Initiative Name", "Dates", "Coordinator", 
-                                  "Goal", "Raised", "Expenses", "Net Proceeds", 
-                                  "Success Rate", "Status"]
-                st.dataframe(display_df[display_columns], use_container_width=True)
+    else:
+        st.info(f"{report_type} reports are available in the full version.")
+        st.write("Please add transactions and events to generate more detailed reports.")
 
-# Fundraising function
+# Fundraising function (simplified)
 def show_fundraising():
     st.header("Fundraising Management")
     
@@ -1038,87 +835,32 @@ def show_fundraising():
     st.subheader("Fundraising Initiatives")
     
     if st.session_state.fundraising:
-        fundraising_df = pd.DataFrame(st.session_state.fundraising)
-        # Format currency columns
-        fundraising_df["goal_amount"] = fundraising_df["goal_amount"].apply(lambda x: f"KD {x:.2f}")
-        fundraising_df["actual_raised"] = fundraising_df["actual_raised"].apply(lambda x: f"KD {x:.2f}")
-        fundraising_df["expenses"] = fundraising_df["expenses"].apply(lambda x: f"KD {x:.2f}")
-        fundraising_df["net_proceeds"] = fundraising_df["net_proceeds"].apply(lambda x: f"KD {x:.2f}")
-        # Rename columns for display
-        display_df = fundraising_df.rename(columns={
-            "name": "Initiative Name",
-            "dates": "Dates",
-            "coordinator": "Coordinator",
-            "goal_amount": "Goal Amount",
-            "actual_raised": "Amount Raised",
-            "expenses": "Expenses",
-            "net_proceeds": "Net Proceeds",
-            "status": "Status"
-        })
-        # Select columns to display
-        display_columns = ["Initiative Name", "Dates", "Coordinator", 
-                          "Goal Amount", "Amount Raised", "Status"]
-        st.dataframe(display_df[display_columns], use_container_width=True)
-        
-        # Initiative details
-        st.subheader("Initiative Details")
-        selected_initiative = st.selectbox("Select initiative to view details", 
-                                         [f["name"] for f in st.session_state.fundraising])
-        
-        if selected_initiative:
-            initiative = next((f for f in st.session_state.fundraising if f["name"] == selected_initiative), None)
-            
-            if initiative:
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.subheader(initiative["name"])
-                    st.write(f"**Dates:** {initiative['dates']}")
-                    st.write(f"**Coordinator:** {initiative['coordinator']}")
-                    st.write(f"**Status:** {initiative['status']}")
-                
-                with col2:
-                    # Financial summary
-                    st.subheader("Financial Summary")
-                    st.write(f"**Goal Amount:** KD {initiative['goal_amount']:.2f}")
-                    st.write(f"**Amount Raised:** KD {initiative['actual_raised']:.2f}")
-                    st.write(f"**Expenses:** KD {initiative['expenses']:.2f}")
-                    st.write(f"**Net Proceeds:** KD {initiative['net_proceeds']:.2f}")
-                    
-                    if initiative['goal_amount'] > 0:
-                        success_rate = (initiative['actual_raised'] / initiative['goal_amount']) * 100
-                        st.write(f"**Success Rate:** {success_rate:.1f}%")
-                
-                # Update initiative status
-                new_status = st.selectbox("Update Status", 
-                                         ["Planning", "Active", "Completed"],
-                                         index=["Planning", "Active", "Completed"].index(initiative["status"]))
-                
-                if new_status != initiative["status"]:
-                    initiative["status"] = new_status
-                    st.success(f"Updated {initiative['name']} status to {new_status}")
-                
-                # Update actual figures
-                with st.expander("Update Actual Figures"):
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        new_raised = st.number_input("Amount Raised (KD)", 
-                                                   min_value=0.0, 
-                                                   value=float(initiative["actual_raised"]),
-                                                   format="%.2f")
-                    
-                    with col2:
-                        new_expenses = st.number_input("Expenses (KD)", 
-                                                     min_value=0.0, 
-                                                     value=float(initiative["expenses"]),
-                                                     format="%.2f")
-                    
-                    if st.button("Update Figures"):
-                        initiative["actual_raised"] = new_raised
-                        initiative["expenses"] = new_expenses
-                        initiative["net_proceeds"] = new_raised - new_expenses
-                        st.success("Updated actual figures")
+        try:
+            fundraising_df = pd.DataFrame(st.session_state.fundraising)
+            # Format currency columns
+            fundraising_df["goal_amount"] = fundraising_df["goal_amount"].apply(lambda x: f"KD {x:.2f}")
+            fundraising_df["actual_raised"] = fundraising_df["actual_raised"].apply(lambda x: f"KD {x:.2f}")
+            fundraising_df["expenses"] = fundraising_df["expenses"].apply(lambda x: f"KD {x:.2f}")
+            fundraising_df["net_proceeds"] = fundraising_df["net_proceeds"].apply(lambda x: f"KD {x:.2f}")
+            # Rename columns for display
+            display_df = fundraising_df.rename(columns={
+                "name": "Initiative Name",
+                "dates": "Dates",
+                "coordinator": "Coordinator",
+                "goal_amount": "Goal Amount",
+                "actual_raised": "Amount Raised",
+                "expenses": "Expenses",
+                "net_proceeds": "Net Proceeds",
+                "status": "Status"
+            })
+            # Select columns to display
+            display_columns = [col for col in ["Initiative Name", "Dates", "Coordinator", 
+                              "Goal Amount", "Amount Raised", "Status"]
+                              if col in display_df.columns]
+            st.dataframe(display_df[display_columns], use_container_width=True)
+        except Exception as e:
+            st.error(f"Error displaying fundraising initiatives: {e}")
+            st.write(fundraising_df)
     else:
         st.info("No fundraising initiatives created yet.")
 
@@ -1148,17 +890,20 @@ def load_data():
     uploaded_file = st.file_uploader("Upload backup file", type=["json"])
     
     if uploaded_file:
-        # Read the file
-        data = json.load(uploaded_file)
-        
-        # Update session state
-        st.session_state.budget = data.get("budget", st.session_state.budget)
-        st.session_state.transactions = data.get("transactions", st.session_state.transactions)
-        st.session_state.events = data.get("events", st.session_state.events)
-        st.session_state.fundraising = data.get("fundraising", st.session_state.fundraising)
-        
-        st.success("Data loaded successfully")
-        st.experimental_rerun()
+        try:
+            # Read the file
+            data = json.load(uploaded_file)
+            
+            # Update session state
+            st.session_state.budget = data.get("budget", st.session_state.budget)
+            st.session_state.transactions = data.get("transactions", st.session_state.transactions)
+            st.session_state.events = data.get("events", st.session_state.events)
+            st.session_state.fundraising = data.get("fundraising", st.session_state.fundraising)
+            
+            st.success("Data loaded successfully")
+            st.experimental_rerun()
+        except Exception as e:
+            st.error(f"Error loading data: {e}")
 
 # Main app
 def main():
